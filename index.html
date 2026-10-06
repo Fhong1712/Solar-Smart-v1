@@ -81,27 +81,32 @@ const DEFAULT_DB = {
   inverters: [{ id: "i1", name: "Biến tần Growatt 5kW", watt: 5000, price: 18000000 }, { id: "i2", name: "Biến tần Sungrow 10kW", watt: 10000, price: 32000000 }, { id: "i3", name: "Biến tần Huawei 20kW", watt: 20000, price: 55000000 }],
   batteries: [{ id: "b1", name: "Pin lưu trữ LiFePO4 5kWh", watt: 5000, price: 28000000 }, { id: "b2", name: "Pin lưu trữ LiFePO4 10kWh", watt: 10000, price: 52000000 }]
 };
-const DEFAULT_CALC = { kwh: 500, price: 2500, sun: 4, bat: false, extra: 5000000, L: { panel: { id: null, qty: 0 }, inverter: { id: null, qty: 0 }, battery: { id: null, qty: 1 } } };
+const DEFAULT_CALC = { kwh: 500, price: 2500, sun: 4, pr: 80, day: 50, pa: 2.6, roof: 0, phase: 1, bat: false, extra: 5000000, L: { panel: { id: null, qty: 0 }, inverter: { id: null, qty: 0 }, battery: { id: null, qty: 1 } } };
 let db = ls.get("solar_db", DEFAULT_DB);
 let calc = ls.get("solar_calc", DEFAULT_CALC);
 if (!calc.L || calc.sun === undefined) calc = DEFAULT_CALC;
+calc = { ...DEFAULT_CALC, ...calc };
 let quote = ls.get("solar_quote", { company: "", phone: "", customer: "", address: "", deposit: 30, days: 7, warranty: "- Tấm pin: bảo hành 12 năm.\n- Biến tần: bảo hành 5 năm.\n- Thi công: bảo hành 2 năm." });
 let sheetUrl = ls.get("solar_sheet_url", SHEET_DEFAULT), syncTime = ls.get("solar_sync", null), syncMsg = "", syncing = false, tab = "calc";
 
 /* ===== TÍNH TOÁN ===== */
 const find = (dk, id) => db[dk].find((x) => x.id === id);
-const kwp = () => (calc.sun > 0 ? calc.kwh / 30 / calc.sun / 0.8 : 0);
+const DOD = 0.9, RTE = 0.95, DEG = 0.005; // độ xả pin 90%; hiệu suất sạc-xả 95%; suy hao pin mặt trời 0,5%/năm
+const STD_CB = [10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200];
+const kwp = () => (calc.sun > 0 && calc.pr > 0 ? calc.kwh / 30 / calc.sun / (calc.pr / 100) : 0);
 const LINES = [["panel", "panels", "Tấm pin"], ["inverter", "inverters", "Biến tần"], ["battery", "batteries", "Bình lưu trữ"]];
 
 function suggest() {
   const kw = kwp() * 1000, L = calc.L;
   const pn = find("panels", L.panel.id) || db.panels[0];
   L.panel = { id: pn?.id, qty: pn ? Math.max(1, Math.ceil(kw / pn.watt)) : 0 };
-  const cur = find("inverters", L.inverter.id);
-  const inv = cur && cur.watt >= kw ? cur : [...db.inverters].sort((a, b) => a.watt - b.watt).find((i) => i.watt >= kw) || [...db.inverters].sort((a, b) => b.watt - a.watt)[0];
+  const pool = calc.bat && db.inverters.some((i) => i.hybrid) ? db.inverters.filter((i) => i.hybrid) : db.inverters;
+  const cur = pool.find((i) => i.id === L.inverter.id);
+  const inv = cur && cur.watt >= kw ? cur : [...pool].sort((a, b) => a.watt - b.watt).find((i) => i.watt >= kw) || [...pool].sort((a, b) => b.watt - a.watt)[0];
   L.inverter = { id: inv?.id, qty: inv ? 1 : 0 };
   const bt = find("batteries", L.battery.id) || db.batteries[0];
-  L.battery = { id: bt?.id, qty: bt ? (L.battery.qty || 1) : 0 };
+  const nightKwh = ((calc.kwh / 30) * (1 - calc.day / 100)) / DOD;
+  L.battery = { id: bt?.id, qty: bt ? Math.max(1, Math.ceil(nightKwh / (bt.watt / 1000))) : 0 };
 }
 function items() {
   return LINES.filter(([k]) => k !== "battery" || calc.bat).map(([k, dk, label]) => {
@@ -129,14 +134,14 @@ function parseCSV(t) {
 }
 function parseSheet(text) {
   const out = { panels: [], inverters: [], batteries: [] };
-  parseCSV(text).forEach(([loai, ten, watt, gia]) => {
+  parseCSV(text).forEach(([loai, ten, watt, gia, kieu]) => {
     const t = norm(loai), name = String(ten || "").trim();
     if (!name) return;
     const key = t.includes("bien") ? "inverters" : t.includes("binh") || t.includes("luu") ? "batteries" : t.includes("pin") || t.includes("tam") ? "panels" : null;
     if (!key) return;
     let id = key + ":" + norm(name).replace(/[^a-z0-9]+/g, "-");
     if (out[key].some((x) => x.id === id)) id += "-" + out[key].length;
-    out[key].push({ id, name, watt: toNum(watt), price: toNum(gia) });
+    out[key].push({ id, name, watt: toNum(watt), price: toNum(gia), hybrid: /hybrid/i.test(kieu || "") });
   });
   if (!out.panels.length && !out.inverters.length && !out.batteries.length) throw new Error("Không đọc được vật tư. Kiểm tra 4 cột: loai, ten, cong_suat, gia.");
   return out;
@@ -171,11 +176,16 @@ function renderCalc() {
     ${n("kwh", "Số điện hàng tháng (kWh)")}${n("price", "Giá điện tạm tính (VNĐ/kWh)")}${n("sun", "Giờ nắng hiệu dụng (h/ngày)", 'step="0.5"')}</div>
     <div class="g g3" style="margin-top:16px"><div class="kpi"><small>Hóa đơn ước tính/tháng</small><b id="k-bill"></b></div>
     <div class="kpi"><small>Điện tiêu thụ/ngày</small><b id="k-day"></b></div><div class="kpi main"><small>Công suất cần thiết</small><b id="k-kwp"></b></div></div></section>
+    <section class="card"><h2>Thông số kỹ thuật (nâng cao)</h2><div class="g g3">
+    ${n("pr", "Hiệu suất hệ thống (%)")}${n("day", "Điện dùng ban ngày (%)")}${n("pa", "Diện tích mỗi tấm pin (m²)", 'step="0.1"')}${n("roof", "Diện tích mái khả dụng (m², 0 = bỏ qua)")}
+    <label>Loại điện lưới<select data-c="phase"><option value="1" ${calc.phase == 1 ? "selected" : ""}>1 pha 230V</option><option value="3" ${calc.phase == 3 ? "selected" : ""}>3 pha 400V</option></select></label></div></section>
     <section class="card"><h2>Đề xuất hệ thống</h2>
     <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="bat" style="width:auto;margin:0" ${calc.bat ? "checked" : ""}>Thêm bình lưu trữ (tùy chọn)</label>
     <div id="rows" style="margin-top:14px"></div>
     <div class="row x"><b>Vật tư phụ &amp; nhân công</b><input type="number" min="0" data-c="extra" value="${calc.extra}"><span class="tt" id="t-extra"></span></div>
-    <div class="total"><span>Tổng chi phí ước tính</span><b id="k-total"></b></div></section>`;
+    <div class="total"><span>Tổng chi phí ước tính</span><b id="k-total"></b></div></section>
+    <section class="card"><h2>Hiệu quả dự kiến của hệ thống</h2><div class="g g3" id="eff"></div><div id="warn" style="color:#b45309;font-size:13px;margin-top:10px"></div>
+    <p style="color:var(--m);font-size:12px;margin:10px 0 0">Ước tính sơ bộ theo các thông số đã nhập; chưa tính che bóng, hướng và góc nghiêng mái, kiểm tra ghép chuỗi pin với MPPT, dây dẫn. Cần kỹ thuật viên xác nhận trước khi thi công.</p></section>`;
   renderRows(); updateCalc();
 }
 function renderRows() {
@@ -187,6 +197,34 @@ function updateCalc() {
   const set = (id, v) => { const e = $("#" + id); if (e) e.textContent = v; };
   set("k-bill", fmt(calc.kwh * calc.price)); set("k-day", (calc.kwh / 30).toFixed(1) + " kWh"); set("k-kwp", kwp().toFixed(2) + " kWp");
   items().forEach((r) => set("t-" + r.k, fmt(r.sum))); set("t-extra", fmt(calc.extra)); set("k-total", fmt(total()));
+  const eff = $("#eff");
+  if (eff) {
+    const pn = find("panels", calc.L.panel.id), N = calc.L.panel.qty, dc = pn ? (pn.watt * N) / 1000 : 0;
+    const gen = dc * calc.sun * (calc.pr / 100), need = calc.kwh / 30, dayNeed = (need * calc.day) / 100, night = need - dayNeed;
+    const direct = Math.min(gen, dayNeed), surplus = gen - direct;
+    let cap = 0, use = 0, stored = 0, fromBat = 0;
+    if (calc.bat) { const bt = find("batteries", calc.L.battery.id); cap = bt ? (bt.watt * calc.L.battery.qty) / 1000 : 0; use = cap * DOD; stored = Math.min(surplus, use); fromBat = Math.min(stored * RTE, night); }
+    const self = direct + fromBat, grid = Math.max(0, need - self), spill = Math.max(0, surplus - stored);
+    const save = self * 30 * calc.price, pay = save > 0 ? total() / (save * 12) : 0;
+    const iv = find("inverters", calc.L.inverter.id), kva = iv ? iv.watt / 1000 : 0, ratio = kva > 0 ? dc / kva : 0;
+    const I = kva ? (kva * 1000) / (calc.phase == 3 ? Math.sqrt(3) * 400 : 230) : 0, cb = STD_CB.find((x) => x >= I * 1.25) || Math.ceil(I * 1.25);
+    const area = N * calc.pa, f1 = (x) => x.toFixed(1), pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) + "%" : "–");
+    const k = (a, b, c = "") => `<div class="kpi ${c}"><small>${a}</small><b>${b}</b></div>`;
+    let h = k("Công suất pin lắp đặt", dc.toFixed(2) + " kWp") + k("Sản lượng ước tính", f1(gen) + " kWh/ngày (~" + Math.round(gen * 30) + "/tháng)") + k("Sản lượng / nhu cầu", pct(gen, need))
+      + k("Dùng trực tiếp ban ngày", f1(direct) + " kWh/ngày") + k("Điện dư chưa dùng hết", f1(spill) + " kWh/ngày") + k("Điện lưới còn phải mua", f1(grid) + " kWh/ngày");
+    if (calc.bat) h += k("Dung lượng lưu trữ", f1(cap) + " kWh") + k("Dùng được (~" + Math.round(DOD * 100) + "%)", f1(use) + " kWh") + k("Bình cấp ban đêm", f1(fromBat) + " kWh/ngày (" + pct(fromBat, night) + " tải đêm)");
+    h += k("Tự cấp được", pct(self, need), "main") + k("Tiết kiệm ước tính", fmt(save) + "/tháng") + k("Hoàn vốn ước tính", pay > 0 ? pay.toFixed(1) + " năm" : "–")
+      + k("Sản lượng năm thứ 25", f1(gen * Math.pow(1 - DEG, 25)) + " kWh/ngày") + k("Tỷ lệ DC/AC", ratio > 0 ? ratio.toFixed(2) : "–") + k("Diện tích mái cần", Math.round(area) + " m²")
+      + k("Dòng AC / CB gợi ý", I > 0 ? I.toFixed(1) + " A / CB " + cb + " A" : "–");
+    const w = [];
+    if (calc.bat && iv && !iv.hybrid) w.push("Biến tần \"" + esc(iv.name) + "\" chưa được đánh dấu hybrid (ghi hybrid ở cột E trong Sheet). Hệ có bình lưu trữ cần biến tần hybrid.");
+    if (ratio > 1.3) w.push("DC/AC > 1,3: pin lớn hơn nhiều so với biến tần, dễ bị cắt đỉnh.");
+    if (ratio > 0 && ratio < 0.8) w.push("DC/AC < 0,8: biến tần quá lớn so với pin, tốn chi phí không cần thiết.");
+    if (calc.roof > 0 && area > calc.roof) w.push("Diện tích mái không đủ: cần ~" + Math.round(area) + " m², hiện có " + calc.roof + " m².");
+    if (!calc.bat && gen > 0 && spill > 0.1 * gen) w.push("Ban ngày dư nhiều điện (" + f1(spill) + " kWh/ngày): cân nhắc thêm bình lưu trữ hoặc giảm số tấm pin.");
+    w.push("Tiết kiệm tính theo giá điện phẳng và chỉ phần điện tự dùng, chưa tính bán điện dư.");
+    eff.innerHTML = h; $("#warn").innerHTML = w.map((x) => "<p style='margin:4px 0'>⚠️ " + x + "</p>").join("");
+  }
   ls.set("solar_calc", calc);
 }
 
@@ -266,14 +304,14 @@ document.querySelector("nav").addEventListener("click", (e) => { const t = e.tar
 const app = $("#app");
 app.addEventListener("input", (e) => {
   const d = e.target.dataset, v = e.target.value;
-  if (d.c) { calc[d.c] = +v || 0; if (d.c === "kwh" || d.c === "sun") { suggest(); renderRows(); } updateCalc(); }
+  if (d.c) { calc[d.c] = +v || 0; if (["kwh", "sun", "pr", "day"].includes(d.c)) { suggest(); renderRows(); } updateCalc(); }
   else if (d.q) { calc.L[d.q].qty = Math.max(0, +v || 0); updateCalc(); }
   else if (d.f) { quote[d.f] = v; ls.set("solar_quote", quote); renderPreview(); }
 });
 app.addEventListener("change", (e) => {
   const t = e.target;
   if (t.dataset.s) { calc.L[t.dataset.s].id = t.value; renderRows(); updateCalc(); }
-  else if (t.id === "bat") { calc.bat = t.checked; renderRows(); updateCalc(); }
+  else if (t.id === "bat") { calc.bat = t.checked; suggest(); renderRows(); updateCalc(); }
 });
 app.addEventListener("click", (e) => {
   if (e.target.id === "pdf") exportPdf();
