@@ -81,7 +81,7 @@ const DEFAULT_DB = {
   inverters: [{ id: "i1", name: "Biến tần Growatt 5kW", watt: 5000, price: 18000000 }, { id: "i2", name: "Biến tần Sungrow 10kW", watt: 10000, price: 32000000 }, { id: "i3", name: "Biến tần Huawei 20kW", watt: 20000, price: 55000000 }],
   batteries: [{ id: "b1", name: "Pin lưu trữ LiFePO4 5kWh", watt: 5000, price: 28000000 }, { id: "b2", name: "Pin lưu trữ LiFePO4 10kWh", watt: 10000, price: 52000000 }]
 };
-const DEFAULT_CALC = { kwh: 500, price: 2500, sun: 4, pr: 80, day: 50, pa: 2.6, roof: 0, phase: 1, bat: false, extra: 5000000, L: { panel: { id: null, qty: 0 }, inverter: { id: null, qty: 0 }, battery: { id: null, qty: 1 } } };
+const DEFAULT_CALC = { kwh: 500, price: 2500, sun: 4, pr: 80, day: 50, pa: 2.6, hrs: 9, roof: 0, phase: 1, bat: false, extra: 5000000, L: { panel: { id: null, qty: 0 }, inverter: { id: null, qty: 0 }, battery: { id: null, qty: 1 } } };
 let db = ls.get("solar_db", DEFAULT_DB);
 let calc = ls.get("solar_calc", DEFAULT_CALC);
 if (!calc.L || calc.sun === undefined) calc = DEFAULT_CALC;
@@ -93,7 +93,12 @@ let sheetUrl = ls.get("solar_sheet_url", SHEET_DEFAULT), syncTime = ls.get("sola
 const find = (dk, id) => db[dk].find((x) => x.id === id);
 const DOD = 0.9, RTE = 0.95, DEG = 0.005; // độ xả pin 90%; hiệu suất sạc-xả 95%; suy hao pin mặt trời 0,5%/năm
 const STD_CB = [10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200];
-const kwp = () => (calc.sun > 0 && calc.pr > 0 ? calc.kwh / 30 / calc.sun / (calc.pr / 100) : 0);
+// Có bình: PV phải cấp tải ban ngày + sạc đủ cho tải ban đêm (tính cả hao sạc-xả). Không bình: phủ toàn bộ nhu cầu.
+const kwp = () => {
+  if (!(calc.sun > 0 && calc.pr > 0)) return 0;
+  const Q = calc.kwh / 30, qd = (Q * calc.day) / 100, qn = Q - qd;
+  return (calc.bat ? qd + qn / RTE : Q) / calc.sun / (calc.pr / 100);
+};
 const LINES = [["panel", "panels", "Tấm pin"], ["inverter", "inverters", "Biến tần"], ["battery", "batteries", "Bình lưu trữ"]];
 
 function suggest() {
@@ -177,7 +182,7 @@ function renderCalc() {
     <div class="g g3" style="margin-top:16px"><div class="kpi"><small>Hóa đơn ước tính/tháng</small><b id="k-bill"></b></div>
     <div class="kpi"><small>Điện tiêu thụ/ngày</small><b id="k-day"></b></div><div class="kpi main"><small>Công suất cần thiết</small><b id="k-kwp"></b></div></div></section>
     <section class="card"><h2>Thông số kỹ thuật (nâng cao)</h2><div class="g g3">
-    ${n("pr", "Hiệu suất hệ thống (%)")}${n("day", "Điện dùng ban ngày (%)")}${n("pa", "Diện tích mỗi tấm pin (m²)", 'step="0.1"')}${n("roof", "Diện tích mái khả dụng (m², 0 = bỏ qua)")}
+    ${n("pr", "Hiệu suất hệ thống (%)")}${n("day", "Điện dùng ban ngày (%)")}${n("hrs", "Số giờ ban ngày có nắng (h)")}${n("pa", "Diện tích mỗi tấm pin (m²)", 'step="0.1"')}${n("roof", "Diện tích mái khả dụng (m², 0 = bỏ qua)")}
     <label>Loại điện lưới<select data-c="phase"><option value="1" ${calc.phase == 1 ? "selected" : ""}>1 pha 230V</option><option value="3" ${calc.phase == 3 ? "selected" : ""}>3 pha 400V</option></select></label></div></section>
     <section class="card"><h2>Đề xuất hệ thống</h2>
     <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="bat" style="width:auto;margin:0" ${calc.bat ? "checked" : ""}>Thêm bình lưu trữ (tùy chọn)</label>
@@ -213,6 +218,8 @@ function updateCalc() {
     let h = k("Công suất pin lắp đặt", dc.toFixed(2) + " kWp") + k("Sản lượng ước tính", f1(gen) + " kWh/ngày (~" + Math.round(gen * 30) + "/tháng)") + k("Sản lượng / nhu cầu", pct(gen, need))
       + k("Dùng trực tiếp ban ngày", f1(direct) + " kWh/ngày") + k("Điện dư chưa dùng hết", f1(spill) + " kWh/ngày") + k("Điện lưới còn phải mua", f1(grid) + " kWh/ngày");
     if (calc.bat) h += k("Dung lượng lưu trữ", f1(cap) + " kWh") + k("Dùng được (~" + Math.round(DOD * 100) + "%)", f1(use) + " kWh") + k("Bình cấp ban đêm", f1(fromBat) + " kWh/ngày (" + pct(fromBat, night) + " tải đêm)");
+    const hrs = calc.hrs > 0 ? calc.hrs : 9, pPv = (direct + stored) / hrs;
+    h += k("Tải TB ban ngày", (dayNeed / hrs).toFixed(2) + " kW") + (calc.bat ? k("Công suất sạc bình TB", (stored / hrs).toFixed(2) + " kW") : "") + k("PV cần cấp TB ban ngày", pPv.toFixed(2) + " kW" + (kva ? " (biến tần " + kva + " kW)" : ""));
     h += k("Tự cấp được", pct(self, need), "main") + k("Tiết kiệm ước tính", fmt(save) + "/tháng") + k("Hoàn vốn ước tính", pay > 0 ? pay.toFixed(1) + " năm" : "–")
       + k("Sản lượng năm thứ 25", f1(gen * Math.pow(1 - DEG, 25)) + " kWh/ngày") + k("Tỷ lệ DC/AC", ratio > 0 ? ratio.toFixed(2) : "–") + k("Diện tích mái cần", Math.round(area) + " m²")
       + k("Dòng AC / CB gợi ý", I > 0 ? I.toFixed(1) + " A / CB " + cb + " A" : "–");
@@ -222,6 +229,8 @@ function updateCalc() {
     if (ratio > 0 && ratio < 0.8) w.push("DC/AC < 0,8: biến tần quá lớn so với pin, tốn chi phí không cần thiết.");
     if (calc.roof > 0 && area > calc.roof) w.push("Diện tích mái không đủ: cần ~" + Math.round(area) + " m², hiện có " + calc.roof + " m².");
     if (!calc.bat && gen > 0 && spill > 0.1 * gen) w.push("Ban ngày dư nhiều điện (" + f1(spill) + " kWh/ngày): cân nhắc thêm bình lưu trữ hoặc giảm số tấm pin.");
+    if (kva > 0 && pPv > kva) w.push("Công suất TB cần từ pin mặt trời ban ngày (" + pPv.toFixed(2) + " kW) lớn hơn biến tần (" + kva + " kW).");
+    if (calc.bat) w.push("Mô hình: ban ngày pin mặt trời cấp tải rồi sạc bình, bình chỉ xả ban đêm. Chưa tính giới hạn công suất sạc/xả của bình.");
     w.push("Tiết kiệm tính theo giá điện phẳng và chỉ phần điện tự dùng, chưa tính bán điện dư.");
     eff.innerHTML = h; $("#warn").innerHTML = w.map((x) => "<p style='margin:4px 0'>⚠️ " + x + "</p>").join("");
   }
