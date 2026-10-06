@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Solar Calculator Pro</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Solar Pro">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+:root{--b:#2563eb;--bd:#1d4ed8;--bg:#f1f5f9;--t:#1e293b;--m:#64748b;--l:#e2e8f0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+header{background:#fff;border-bottom:1px solid var(--l);position:sticky;top:0;z-index:5;padding-top:env(safe-area-inset-top)}
+.wrap{max-width:1100px;margin:0 auto;padding:12px 16px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center}
+.logo{font-weight:700;font-size:18px}
+nav{display:flex;gap:4px;background:var(--bg);padding:4px;border-radius:12px}
+nav button{border:0;background:none;padding:6px 16px;border-radius:8px;font:inherit;font-weight:500;color:var(--m);cursor:pointer}
+nav button.on{background:var(--b);color:#fff}
+main{max-width:1100px;margin:0 auto;padding:20px 16px}
+.card{background:#fff;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.06);border:1px solid #f1f5f9;padding:20px;margin-bottom:20px}
+.card h2{margin:0 0 14px;font-size:17px}
+.g{display:grid;gap:12px}.g3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+label{display:block;font-size:13px;font-weight:500;color:var(--m)}
+input,select,textarea{width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--l);border-radius:12px;font:inherit;color:var(--t);background:#fff}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--b);border-color:transparent}
+.btn{background:var(--b);color:#fff;border:0;border-radius:12px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.6}
+.kpi{background:#eff6ff;border-radius:12px;padding:10px 14px}.kpi small{display:block;color:var(--m);font-size:12px}.kpi b{color:var(--bd);font-size:17px}
+.kpi.main{background:var(--b)}.kpi.main small,.kpi.main b{color:#fff}
+.row{display:grid;grid-template-columns:110px 1fr 90px 150px;gap:8px;align-items:center;margin-bottom:10px}
+.row.x{grid-template-columns:110px 1fr 150px;border-top:1px solid var(--l);padding-top:12px}
+.tt{text-align:right;font-weight:600}
+.total{display:flex;justify-content:space-between;align-items:center;background:var(--b);color:#fff;border-radius:12px;padding:12px 16px;font-weight:600;margin-top:14px}
+.total b{font-size:20px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%}th,td{padding:8px;text-align:left;border-bottom:1px solid var(--l)}
+.quote{display:grid;gap:20px;grid-template-columns:320px 1fr;align-items:start}
+@media(max-width:900px){.quote{grid-template-columns:1fr}.row,.row.x{grid-template-columns:90px 1fr}.row>:nth-child(-n+2){grid-column:1/-1}.row.x>:first-child{grid-column:1/-1}}
+.inv{background:#fff;width:794px;min-height:1123px;padding:40px;margin:0 auto;border:1px solid #e2e8f0;color:#0f172a;font-size:13px}
+.inv .ih{display:flex;justify-content:space-between;border-bottom:2px solid #2563eb;padding-bottom:12px}
+.inv h1{margin:0;font-size:22px;color:#1d4ed8}
+.inv table{margin-top:16px}.inv th{background:#2563eb;color:#fff}.inv td,.inv th{border-bottom:1px solid #e2e8f0}
+.inv .tr td{background:#eff6ff;font-weight:700;text-align:right}
+.inv .sig{display:grid;grid-template-columns:1fr 1fr;text-align:center;margin-top:70px}
+#toast{position:fixed;top:12px;right:12px;z-index:9;background:#059669;color:#fff;padding:10px 16px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.2);display:none}
+#toast.show{display:block}#toast.error{background:#dc2626}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<header><div class="wrap bar">
+  <span class="logo">☀️ Solar Calculator Pro</span>
+  <nav><button data-t="calc">Tính toán</button><button data-t="quote">Báo giá</button><button data-t="settings">Cài đặt</button></nav>
+</div></header>
+<main id="app"></main>
+
+<script src="jspdf.umd.min.js"></script>
+<script src="html2canvas.min.js"></script>
+<script>
+/* ===== CẤU HÌNH: link CSV Google Sheet mặc định (có thể đổi trong Tab Cài đặt) ===== */
+const SHEET_DEFAULT = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQXK42wfheBUSxFwQB_s3tbcX6vo0Dj6pdLvzuT-rlQLfowph9Gu6VcjajpgCkIWCFU0nciu_pDIud1/pub?gid=0&single=true&output=csv";
+
+const $ = (s) => document.querySelector(s);
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const fmtN = (n) => new Intl.NumberFormat("vi-VN").format(n || 0);
+const fmt = (n) => fmtN(Math.round(n || 0)) + "đ";
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let tt; function toast(m, type) { const t = $("#toast"); t.textContent = m; t.className = "show " + (type || ""); clearTimeout(tt); tt = setTimeout(() => (t.className = ""), 2500); }
+
+/* ===== DỮ LIỆU ===== */
+const DEFAULT_DB = {
+  panels: [{ id: "p1", name: "Pin Jinko 550W", watt: 550, price: 2800000 }, { id: "p2", name: "Pin Longi 600W", watt: 600, price: 3200000 }],
+  inverters: [{ id: "i1", name: "Biến tần Growatt 5kW", watt: 5000, price: 18000000 }, { id: "i2", name: "Biến tần Sungrow 10kW", watt: 10000, price: 32000000 }, { id: "i3", name: "Biến tần Huawei 20kW", watt: 20000, price: 55000000 }],
+  batteries: [{ id: "b1", name: "Pin lưu trữ LiFePO4 5kWh", watt: 5000, price: 28000000 }, { id: "b2", name: "Pin lưu trữ LiFePO4 10kWh", watt: 10000, price: 52000000 }]
+};
+const DEFAULT_CALC = { kwh: 500, price: 2500, sun: 4, bat: false, extra: 5000000, L: { panel: { id: null, qty: 0 }, inverter: { id: null, qty: 0 }, battery: { id: null, qty: 1 } } };
+let db = ls.get("solar_db", DEFAULT_DB);
+let calc = ls.get("solar_calc", DEFAULT_CALC);
+if (!calc.L || calc.sun === undefined) calc = DEFAULT_CALC;
+let quote = ls.get("solar_quote", { company: "", phone: "", customer: "", address: "", deposit: 30, days: 7, warranty: "- Tấm pin: bảo hành 12 năm.\n- Biến tần: bảo hành 5 năm.\n- Thi công: bảo hành 2 năm." });
+let sheetUrl = ls.get("solar_sheet_url", SHEET_DEFAULT), syncTime = ls.get("solar_sync", null), syncMsg = "", syncing = false, tab = "calc";
+
+/* ===== TÍNH TOÁN ===== */
+const find = (dk, id) => db[dk].find((x) => x.id === id);
+const kwp = () => (calc.sun > 0 ? calc.kwh / 30 / calc.sun / 0.8 : 0);
+const LINES = [["panel", "panels", "Tấm pin"], ["inverter", "inverters", "Biến tần"], ["battery", "batteries", "Bình lưu trữ"]];
+
+function suggest() {
+  const kw = kwp() * 1000, L = calc.L;
+  const pn = find("panels", L.panel.id) || db.panels[0];
+  L.panel = { id: pn?.id, qty: pn ? Math.max(1, Math.ceil(kw / pn.watt)) : 0 };
+  const cur = find("inverters", L.inverter.id);
+  const inv = cur && cur.watt >= kw ? cur : [...db.inverters].sort((a, b) => a.watt - b.watt).find((i) => i.watt >= kw) || [...db.inverters].sort((a, b) => b.watt - a.watt)[0];
+  L.inverter = { id: inv?.id, qty: inv ? 1 : 0 };
+  const bt = find("batteries", L.battery.id) || db.batteries[0];
+  L.battery = { id: bt?.id, qty: bt ? (L.battery.qty || 1) : 0 };
+}
+function items() {
+  return LINES.filter(([k]) => k !== "battery" || calc.bat).map(([k, dk, label]) => {
+    const it = find(dk, calc.L[k].id), qty = calc.L[k].qty;
+    return { k, dk, label, it, qty, sum: it ? it.price * qty : 0 };
+  });
+}
+const total = () => items().reduce((s, i) => s + i.sum, 0) + Number(calc.extra || 0);
+
+/* ===== GOOGLE SHEET (CSV) ===== */
+const norm = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").toLowerCase();
+const toNum = (s) => Number(String(s || "").replace(/[^\d]/g, "")) || 0;
+function parseCSV(t) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(cur); cur = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && t[i + 1] === "\n") i++; row.push(cur); cur = ""; rows.push(row); row = []; }
+    else cur += c;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+function parseSheet(text) {
+  const out = { panels: [], inverters: [], batteries: [] };
+  parseCSV(text).forEach(([loai, ten, watt, gia]) => {
+    const t = norm(loai), name = String(ten || "").trim();
+    if (!name) return;
+    const key = t.includes("bien") ? "inverters" : t.includes("binh") || t.includes("luu") ? "batteries" : t.includes("pin") || t.includes("tam") ? "panels" : null;
+    if (!key) return;
+    let id = key + ":" + norm(name).replace(/[^a-z0-9]+/g, "-");
+    if (out[key].some((x) => x.id === id)) id += "-" + out[key].length;
+    out[key].push({ id, name, watt: toNum(watt), price: toNum(gia) });
+  });
+  if (!out.panels.length && !out.inverters.length && !out.batteries.length) throw new Error("Không đọc được vật tư. Kiểm tra 4 cột: loai, ten, cong_suat, gia.");
+  return out;
+}
+async function fetchSheet(url) {
+  let res;
+  try { res = await fetch(url, { cache: "no-store" }); } catch { throw new Error("Không kết nối được. Kiểm tra mạng và link Google Sheet."); }
+  if (!res.ok) throw new Error("Không tải được Google Sheet (mã " + res.status + ").");
+  const text = await res.text();
+  if (/^\s*<(!doctype|html)/i.test(text)) throw new Error("Sheet chưa được xuất bản dạng CSV (Publish to web).");
+  return parseSheet(text);
+}
+async function syncSheet(silent) {
+  if (!sheetUrl) { if (!silent) toast("Chưa nhập link Google Sheet", "error"); return; }
+  if (!navigator.onLine) { if (!silent) toast("Đang offline, dùng dữ liệu đã lưu", "error"); return; }
+  syncing = true; syncMsg = ""; showSync();
+  let changed = false;
+  try {
+    const next = await fetchSheet(sheetUrl);
+    if (JSON.stringify(next) !== JSON.stringify(db)) { db = next; changed = true; ls.set("solar_db", db); suggest(); ls.set("solar_calc", calc); }
+    syncTime = new Date().toISOString(); ls.set("solar_sync", syncTime);
+    if (!silent) toast("Đã đồng bộ " + (next.panels.length + next.inverters.length + next.batteries.length) + " vật tư");
+  } catch (e) { syncMsg = e.message; if (!silent) toast(e.message, "error"); }
+  syncing = false;
+  if (changed) render(); else showSync();
+}
+
+/* ===== TAB 1: TÍNH TOÁN ===== */
+function renderCalc() {
+  const n = (k, l, extra = "") => `<label>${l}<input type="number" min="0" ${extra} data-c="${k}" value="${calc[k]}"></label>`;
+  $("#app").innerHTML = `<section class="card"><h2>Thông số đầu vào</h2><div class="g g3">
+    ${n("kwh", "Số điện hàng tháng (kWh)")}${n("price", "Giá điện tạm tính (VNĐ/kWh)")}${n("sun", "Giờ nắng hiệu dụng (h/ngày)", 'step="0.5"')}</div>
+    <div class="g g3" style="margin-top:16px"><div class="kpi"><small>Hóa đơn ước tính/tháng</small><b id="k-bill"></b></div>
+    <div class="kpi"><small>Điện tiêu thụ/ngày</small><b id="k-day"></b></div><div class="kpi main"><small>Công suất cần thiết</small><b id="k-kwp"></b></div></div></section>
+    <section class="card"><h2>Đề xuất hệ thống</h2>
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="bat" style="width:auto;margin:0" ${calc.bat ? "checked" : ""}>Thêm bình lưu trữ (tùy chọn)</label>
+    <div id="rows" style="margin-top:14px"></div>
+    <div class="row x"><b>Vật tư phụ &amp; nhân công</b><input type="number" min="0" data-c="extra" value="${calc.extra}"><span class="tt" id="t-extra"></span></div>
+    <div class="total"><span>Tổng chi phí ước tính</span><b id="k-total"></b></div></section>`;
+  renderRows(); updateCalc();
+}
+function renderRows() {
+  $("#rows").innerHTML = items().map((r) => `<div class="row"><b>${r.label}</b>
+    <select data-s="${r.k}">${db[r.dk].map((x) => `<option value="${esc(x.id)}" ${x.id === calc.L[r.k].id ? "selected" : ""}>${esc(x.name)} — ${fmt(x.price)}</option>`).join("")}</select>
+    <input type="number" min="0" data-q="${r.k}" value="${r.qty}"><span class="tt" id="t-${r.k}">${fmt(r.sum)}</span></div>`).join("");
+}
+function updateCalc() {
+  const set = (id, v) => { const e = $("#" + id); if (e) e.textContent = v; };
+  set("k-bill", fmt(calc.kwh * calc.price)); set("k-day", (calc.kwh / 30).toFixed(1) + " kWh"); set("k-kwp", kwp().toFixed(2) + " kWp");
+  items().forEach((r) => set("t-" + r.k, fmt(r.sum))); set("t-extra", fmt(calc.extra)); set("k-total", fmt(total()));
+  ls.set("solar_calc", calc);
+}
+
+/* ===== TAB 2: BÁO GIÁ ===== */
+function renderQuote() {
+  const f = (k, l, type = "text", ex = "") => `<label>${l}<input type="${type}" ${ex} data-f="${k}" value="${esc(quote[k])}"></label>`;
+  $("#app").innerHTML = `<div class="quote"><section class="card"><h2>Thông tin báo giá</h2><div class="g">
+    ${f("company", "Tên đơn vị thi công")}${f("phone", "Số điện thoại", "tel")}${f("customer", "Tên khách hàng")}${f("address", "Địa chỉ lắp đặt")}
+    <div class="g" style="grid-template-columns:1fr 1fr">${f("deposit", "Đặt cọc (%)", "number", 'min="0" max="100"')}${f("days", "Số ngày hoàn thành", "number", 'min="1"')}</div>
+    <label>Điều khoản bảo hành<textarea rows="4" data-f="warranty">${esc(quote.warranty)}</textarea></label>
+    <button class="btn" id="pdf">Xuất báo giá PDF</button></div></section>
+    <div class="scroll"><div id="inv" class="inv"></div></div></div>`;
+  renderPreview();
+}
+function renderPreview() {
+  const lines = [...items().filter((r) => r.it && r.qty > 0).map((r) => [r.it.name, r.qty, r.it.price]), ["Vật tư phụ & Nhân công lắp đặt", 1, Number(calc.extra || 0)]];
+  const tot = lines.reduce((s, l) => s + l[1] * l[2], 0), dep = Math.min(100, Math.max(0, +quote.deposit || 0)), da = (tot * dep) / 100;
+  $("#inv").innerHTML = `<div class="ih"><div><h1>${esc(quote.company) || "Tên đơn vị thi công"}</h1><div>SĐT: ${esc(quote.phone)}</div></div>
+    <div style="text-align:right"><b style="font-size:18px">BÁO GIÁ ĐIỆN MẶT TRỜI</b><div>Ngày: ${new Date().toLocaleDateString("vi-VN")}</div></div></div>
+    <p><b>Khách hàng:</b> ${esc(quote.customer)}<br><b>Địa chỉ lắp đặt:</b> ${esc(quote.address)}</p>
+    <table><thead><tr><th style="width:40px">STT</th><th>Hạng mục</th><th style="width:50px">SL</th><th style="width:110px;text-align:right">Đơn giá</th><th style="width:130px;text-align:right">Thành tiền</th></tr></thead><tbody>
+    ${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l[0])}</td><td>${l[1]}</td><td style="text-align:right">${fmt(l[2])}</td><td style="text-align:right"><b>${fmt(l[1] * l[2])}</b></td></tr>`).join("")}
+    <tr class="tr"><td colspan="4">TỔNG CỘNG</td><td style="color:#1d4ed8">${fmt(tot)}</td></tr></tbody></table>
+    <h3>Điều khoản thanh toán</h3><p>- Đặt cọc ${dep}%: <b>${fmt(da)}</b> khi ký hợp đồng.<br>- Thanh toán còn lại ${100 - dep}%: <b>${fmt(tot - da)}</b> sau khi nghiệm thu.<br>- Thời gian hoàn thành dự kiến: ${esc(quote.days)} ngày kể từ ngày nhận cọc.</p>
+    <h3>Bảo hành</h3><p style="white-space:pre-line">${esc(quote.warranty)}</p>
+    <div class="sig"><div><b>Khách hàng</b><br><small>(Ký, ghi rõ họ tên)</small></div><div><b>Đơn vị thi công</b><br><small>(Ký, đóng dấu)</small></div></div>`;
+}
+async function savePdf(pdf, name) {
+  const C = window.Capacitor, P = C && C.Plugins;
+  if (C && C.isNativePlatform && C.isNativePlatform() && P && P.Filesystem && P.Share) {
+    const r = await P.Filesystem.writeFile({ path: name, data: pdf.output("datauristring").split(",")[1], directory: "CACHE" });
+    await P.Share.share({ title: name, url: r.uri }); return;
+  }
+  const file = new File([pdf.output("blob")], name, { type: "application/pdf" });
+  if (/iPhone|iPad/.test(navigator.userAgent) && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+  pdf.save(name);
+}
+async function exportPdf() {
+  const b = $("#pdf"); b.disabled = true; b.textContent = "Đang xuất...";
+  try {
+    const c = await html2canvas($("#inv"), { scale: 2, backgroundColor: "#ffffff" });
+    const pdf = new jspdf.jsPDF("p", "mm", "a4"), W = 210, H = 297;
+    let w = W, h = (c.height * W) / c.width; if (h > H) { w = (W * H) / h; h = H; }
+    pdf.addImage(c.toDataURL("image/png"), "PNG", (W - w) / 2, 0, w, h);
+    const nm = (quote.customer || "Khach_Hang").trim().replace(/\s+/g, "_").replace(/[^\p{L}\p{N}_-]/gu, "");
+    await savePdf(pdf, "Bao_Gia_Dien_Mat_Troi_" + nm + ".pdf"); toast("Đã xuất báo giá PDF");
+  } catch (e) { toast("Xuất PDF thất bại. Vui lòng thử lại.", "error"); }
+  b.disabled = false; b.textContent = "Xuất báo giá PDF";
+}
+
+/* ===== TAB 3: CÀI ĐẶT (đọc từ Google Sheet) ===== */
+function renderSettings() {
+  const G = [["panels", "Tấm pin", "Công suất (W)"], ["inverters", "Biến tần", "Công suất (W)"], ["batteries", "Bình lưu trữ", "Dung lượng (Wh)"]];
+  $("#app").innerHTML = `<section class="card"><h2>Nguồn vật tư: Google Sheet</h2>
+    <p style="color:var(--m);margin-top:0">Vật tư và giá được quản lý trong Google Sheet. App tự cập nhật khi có mạng và lưu lại để dùng offline.</p>
+    <label>Link CSV đã xuất bản của Google Sheet<input id="url" value="${esc(sheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"></label>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px"><button class="btn" id="sync">Lưu &amp; đồng bộ</button><small id="st"></small></div>
+    <p id="err" style="color:#dc2626;margin:8px 0 0"></p></section>` +
+    G.map(([k, t, u]) => `<section class="card"><h2>${t}</h2><div class="scroll"><table><thead><tr><th>Tên</th><th>${u}</th><th>Giá tiền</th></tr></thead><tbody>
+    ${db[k].map((x) => `<tr><td>${esc(x.name)}</td><td>${fmtN(x.watt)}</td><td>${fmt(x.price)}</td></tr>`).join("") || '<tr><td colspan="3">Chưa có dữ liệu. Thêm dòng trong Google Sheet rồi đồng bộ.</td></tr>'}
+    </tbody></table></div></section>`).join("");
+  showSync();
+}
+function showSync() {
+  const s = $("#st"), e = $("#err"), b = $("#sync");
+  if (s) s.textContent = "Lần đồng bộ gần nhất: " + (syncTime ? new Date(syncTime).toLocaleString("vi-VN") : "chưa có");
+  if (e) e.textContent = syncMsg;
+  if (b) { b.disabled = syncing; b.textContent = syncing ? "Đang đồng bộ..." : "Lưu & đồng bộ"; }
+}
+
+/* ===== ĐIỀU HƯỚNG & SỰ KIỆN ===== */
+function render() {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.t === tab));
+  ({ calc: renderCalc, quote: renderQuote, settings: renderSettings })[tab]();
+}
+document.querySelector("nav").addEventListener("click", (e) => { const t = e.target.dataset.t; if (t) { tab = t; render(); } });
+const app = $("#app");
+app.addEventListener("input", (e) => {
+  const d = e.target.dataset, v = e.target.value;
+  if (d.c) { calc[d.c] = +v || 0; if (d.c === "kwh" || d.c === "sun") { suggest(); renderRows(); } updateCalc(); }
+  else if (d.q) { calc.L[d.q].qty = Math.max(0, +v || 0); updateCalc(); }
+  else if (d.f) { quote[d.f] = v; ls.set("solar_quote", quote); renderPreview(); }
+});
+app.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.dataset.s) { calc.L[t.dataset.s].id = t.value; renderRows(); updateCalc(); }
+  else if (t.id === "bat") { calc.bat = t.checked; renderRows(); updateCalc(); }
+});
+app.addEventListener("click", (e) => {
+  if (e.target.id === "pdf") exportPdf();
+  if (e.target.id === "sync") { sheetUrl = $("#url").value.trim(); ls.set("solar_sheet_url", sheetUrl); syncSheet(false); }
+});
+addEventListener("online", () => syncSheet(true));
+if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+
+suggest(); render(); syncSheet(true);
+</script>
+</body>
+</html>
